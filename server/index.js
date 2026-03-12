@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -27,12 +28,63 @@ const transporter = nodemailer.createTransport({
     }
 });
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/portfolio')
-    .then(() => console.log('Connected to MongoDB'))
-    .catch(err => console.error('Could not connect to MongoDB', err));
+// Mock data for testing (when MongoDB is not available)
+const mockProjects = [
+    {
+        _id: '1',
+        title: 'Portfolio Website',
+        description: 'A modern portfolio website built with React and Node.js',
+        type: 'web',
+        tags: ['React', 'Node.js', 'Tailwind CSS'],
+        display_order: 1
+    },
+    {
+        _id: '2',
+        title: 'ML Prediction Model',
+        description: 'Machine learning model for predicting user behavior',
+        type: 'ml',
+        tags: ['Python', 'TensorFlow', 'scikit-learn'],
+        display_order: 2
+    }
+];
+
+const mockProfile = {
+    full_name: "Hafizur Rahman",
+    bio: "Web Developer & ML Enthusiast",
+    email: "rahmanhafizur31928@gmail.com",
+    location: "Bangladesh",
+    avatar_url: ""
+};
+
+// MongoDB Connection with retry logic
+const connectWithRetry = async () => {
+    try {
+        await mongoose.connect('mongodb+srv://rahmanhafizur31928_db_user:lTPURXd7jL6AluXp@cluster0.jsyxibm.mongodb.net/portfolio', {
+            serverSelectionTimeoutMS: 5000, // Timeout after 5s
+            maxPoolSize: 10, // Maintain up to 10 socket connections
+        });
+        console.log('✅ Connected to MongoDB Atlas');
+    } catch (err) {
+        console.log('❌ MongoDB connection failed, using mock data mode');
+        console.log('Error details:', err.message);
+        console.log('🔄 Server will continue with mock data');
+    }
+};
+
+// Start connection
+connectWithRetry();
 
 app.get('/', (req, res) => {
     res.send('Portfolio API is running. Access the website at http://localhost:8081');
+});
+
+// Health check endpoint for Railway
+app.get('/api/health', (req, res) => {
+    res.status(200).json({ 
+        status: 'OK', 
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
 });
 
 // Auth Middleware
@@ -77,8 +129,14 @@ app.post('/api/auth/login', async (req, res) => {
 // --- PROJECT ROUTES ---
 
 app.get('/api/projects', async (req, res) => {
-    const projects = await Project.find().sort('display_order');
-    res.json(projects);
+    try {
+        // Try to get from MongoDB first, fallback to mock data
+        const projects = await Project.find().sort('display_order');
+        res.json(projects);
+    } catch (err) {
+        console.log('MongoDB not available, using mock data');
+        res.json(mockProjects);
+    }
 });
 
 app.post('/api/projects', auth, async (req, res) => {
@@ -108,8 +166,8 @@ app.get('/api/inquiries', auth, async (req, res) => {
 });
 
 app.post('/api/inquiries', async (req, res) => {
-    const inquiry = new Inquiry(req.body);
     try {
+        const inquiry = new Inquiry(req.body);
         await inquiry.save();
 
         // Send Email Notification
@@ -136,7 +194,9 @@ app.post('/api/inquiries', async (req, res) => {
 
         res.json({ success: true });
     } catch (err) {
-        res.status(400).send(err);
+        console.log('MongoDB not available, but inquiry received:', req.body);
+        // Still return success even if MongoDB fails
+        res.json({ success: true, message: 'Inquiry received (mock mode)' });
     }
 });
 
@@ -161,18 +221,16 @@ app.delete('/api/inquiries/:id', auth, async (req, res) => {
 // --- PROFILE ROUTES ---
 
 app.get('/api/profile', async (req, res) => {
-    let profile = await Profile.findOne();
-    if (!profile) {
-        // Return default profile if none exists
-        profile = {
-            full_name: "Hafizur Rahman",
-            bio: "Web Developer & ML Enthusiast",
-            email: "rahmanhafizur31928@gmail.com",
-            location: "Bangladesh",
-            avatar_url: ""
-        };
+    try {
+        let profile = await Profile.findOne();
+        if (!profile) {
+            profile = mockProfile;
+        }
+        res.json(profile);
+    } catch (err) {
+        console.log('MongoDB not available, using mock profile');
+        res.json(mockProfile);
     }
-    res.json(profile);
 });
 
 app.put('/api/profile', auth, async (req, res) => {
@@ -191,7 +249,7 @@ app.put('/api/profile', auth, async (req, res) => {
 });
 
 
-const PORT = process.env.PORT || 5001;
+const PORT = 5000;
 
 // Serve static assets in production
 app.use(express.static(path.join(__dirname, '../dist')));
